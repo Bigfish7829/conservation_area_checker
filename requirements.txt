@@ -1,8 +1,8 @@
 streamlit
-geopandas==0.14.3
-shapely<2
-fiona>=1.9.5
-pyproj>=3.6
+geopandas>=0.15.0
+shapely>=2.0
+fiona>=1.9.6
+pyproj>=3.7
 folium
 streamlit-folium
 requests
