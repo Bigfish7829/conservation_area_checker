@@ -14,11 +14,12 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("UK Conservation Area Checker")
+st.title("England Conservation Area Checker")
 
 st.markdown(
-    "Check whether a UK postcode falls within a conservation area and view nearby conservation areas within 10 km."
+    "Check whether a postcode in England falls within a conservation area and view nearby conservation areas within 10 km."
 )
+
 
 # -------------------------
 # Load conservation areas (cached)
