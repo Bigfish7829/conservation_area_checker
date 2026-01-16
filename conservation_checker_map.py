@@ -86,7 +86,7 @@ if postcode:
         st.error("❌ Invalid postcode")
         st.stop()
 
-    inside = areas[areas.intersects(point)]
+    inside = areas[areas.geometry.intersects(point)]
     nearby, buffer_geom = areas_within_radius(point, areas, km=10)
 
     # -------------------------
