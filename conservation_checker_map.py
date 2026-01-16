@@ -48,7 +48,7 @@ def load_conservation_areas():
     england = normalise_schema(england, "England")
 
     # ---------- Wales ----------
-    wales = gpd.read_file("conservation-area-wales.json")
+    wales = gpd.read_file("wales-conservation-areas.json")
 
     if wales.crs is None:
         wales = wales.set_crs(epsg=27700)
