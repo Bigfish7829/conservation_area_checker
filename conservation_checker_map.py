@@ -25,21 +25,32 @@ st.markdown(
 # Load conservation areas (cached)
 # -------------------------
 @st.cache_data
+@st.cache_data
 def load_conservation_areas():
+    # England files (already EPSG:4326)
     gdf1 = gpd.read_file("conservation-area-1.geojson")
     gdf2 = gpd.read_file("conservation-area-2.geojson")
 
-    gdf = gpd.GeoDataFrame(
+    england = gpd.GeoDataFrame(
         pd.concat([gdf1, gdf2], ignore_index=True),
         crs="EPSG:4326"
     )
 
-    if gdf.crs is None:
-        gdf = gdf.set_crs(epsg=4326)
+    # Wales file (EPSG:27700 → reproject)
+    wales = gpd.read_file("conservation-area-wales.geojson")
 
-    return gdf
+    # Explicitly set CRS BEFORE transforming
+    wales = wales.set_crs(epsg=27700)
+    wales = wales.to_crs(epsg=4326)
 
-areas = load_conservation_areas()
+    # Combine everything
+    all_areas = gpd.GeoDataFrame(
+        pd.concat([england, wales], ignore_index=True),
+        crs="EPSG:4326"
+    )
+
+    return all_areas
+
 
 # -------------------------
 # Helper functions
