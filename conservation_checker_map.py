@@ -1,49 +1,62 @@
 import streamlit as st
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import Point
 import requests
+from shapely.geometry import Point
 import folium
 from streamlit_folium import st_folium
 
-# -------------------------
-# Page config
-# -------------------------
-st.set_page_config(
-    page_title="UK Conservation Area Checker",
-    layout="wide"
-)
+st.set_page_config(page_title="UK Conservation Area Checker", layout="wide")
 
-st.title("England Conservation Area Checker")
+st.title("🏛️ UK Conservation Area Checker")
+st.write("Enter a postcode to check whether it lies within a conservation area.")
 
-st.markdown(
-    "Check whether a postcode in England falls within a conservation area and view nearby conservation areas within 10 km."
-)
+# --------------------------------------------------
+# Helpers
+# --------------------------------------------------
 
+def geocode_postcode(postcode: str):
+    postcode = postcode.replace(" ", "")
+    url = f"https://api.postcodes.io/postcodes/{postcode}"
+    r = requests.get(url)
+    if r.status_code != 200:
+        return None
+    data = r.json()["result"]
+    return data["longitude"], data["latitude"]
 
-# -------------------------
-# Load conservation areas (cached)
-# -------------------------
-@st.cache_data
+def normalise_schema(gdf, source):
+    if source == "England":
+        gdf["area_name"] = gdf.get("name", "Unknown")
+        gdf["doc_url"] = gdf.get("documentation-url")
+    elif source == "Wales":
+        gdf["area_name"] = gdf.get("NAME", "Unknown")
+        gdf["doc_url"] = None
+
+    gdf["source"] = source
+    return gdf[["area_name", "doc_url", "source", "geometry"]]
+
 @st.cache_data
 def load_conservation_areas():
-    # England files (already EPSG:4326)
-    gdf1 = gpd.read_file("conservation-area-1.geojson")
-    gdf2 = gpd.read_file("conservation-area-2.geojson")
+    # ---------- England ----------
+    eng1 = gpd.read_file("conservation-area-1.geojson")
+    eng2 = gpd.read_file("conservation-area-2.geojson")
 
     england = gpd.GeoDataFrame(
-        pd.concat([gdf1, gdf2], ignore_index=True),
+        pd.concat([eng1, eng2], ignore_index=True),
         crs="EPSG:4326"
     )
+    england = normalise_schema(england, "England")
 
-    # Wales file (EPSG:27700 → reproject)
+    # ---------- Wales ----------
     wales = gpd.read_file("conservation-area-wales.geojson")
 
-    # Explicitly set CRS BEFORE transforming
-    wales = wales.set_crs(epsg=27700)
-    wales = wales.to_crs(epsg=4326)
+    if wales.crs is None:
+        wales = wales.set_crs(epsg=27700)
 
-    # Combine everything
+    wales = wales.to_crs(epsg=4326)
+    wales = normalise_schema(wales, "Wales")
+
+    # ---------- Combine ----------
     all_areas = gpd.GeoDataFrame(
         pd.concat([england, wales], ignore_index=True),
         crs="EPSG:4326"
@@ -51,127 +64,83 @@ def load_conservation_areas():
 
     return all_areas
 
+# --------------------------------------------------
+# Load data
+# --------------------------------------------------
 
-# -------------------------
-# Helper functions
-# -------------------------
-def postcode_to_point(postcode: str):
-    url = f"https://api.postcodes.io/postcodes/{postcode.replace(' ', '')}"
-    r = requests.get(url, timeout=10)
+areas = load_conservation_areas()
 
-    if r.status_code != 200:
-        return None
-
-    data = r.json()
-    if data["status"] != 200 or data["result"] is None:
-        return None
-
-    return Point(
-        data["result"]["longitude"],
-        data["result"]["latitude"]
-    )
-
-def areas_within_radius(point: Point, areas_gdf, km=10):
-    point_gdf = gpd.GeoDataFrame(
-        geometry=[point], crs="EPSG:4326"
-    ).to_crs(27700)
-
-    areas_m = areas_gdf.to_crs(27700)
-    buffer_geom = point_gdf.buffer(km * 1000).iloc[0]
-
-    nearby = areas_m[areas_m.intersects(buffer_geom)]
-
-    return nearby.to_crs(4326), buffer_geom
-
-# -------------------------
+# --------------------------------------------------
 # UI
-# -------------------------
-postcode = st.text_input(
-    "Enter a UK postcode",
-    placeholder="e.g. NW5 4QB"
-)
+# --------------------------------------------------
+
+postcode = st.text_input("Postcode", placeholder="e.g. N19 5BX")
 
 if postcode:
-    point = postcode_to_point(postcode)
+    coords = geocode_postcode(postcode)
 
-    if point is None:
-        st.error("❌ Invalid postcode")
+    if not coords:
+        st.error("Postcode not found.")
         st.stop()
 
-    inside = areas[areas.geometry.intersects(point)]
-    nearby, buffer_geom = areas_within_radius(point, areas, km=10)
-
-    # -------------------------
-    # Results
-    # -------------------------
-    if not inside.empty:
-        st.success("✅ This postcode IS in a conservation area")
-
-        for _, row in inside.iterrows():
-            st.markdown(f"### {row['name']}")
-            st.write(f"**Reference:** {row['reference']}")
-
-            doc_url = row.get("documentation-url")
-            if isinstance(doc_url, str) and doc_url.startswith("http"):
-                st.markdown(
-                    f"[📄 View conservation area documentation]({doc_url})"
-                )
-    else:
-        st.warning("❌ This postcode is NOT in a conservation area")
-
-    # -------------------------
-    # Map
-    # -------------------------
-    m = folium.Map(
-        location=[point.y, point.x],
-        zoom_start=12,
-        tiles="OpenStreetMap"
+    lon, lat = coords
+    point = gpd.GeoDataFrame(
+        geometry=[Point(lon, lat)],
+        crs="EPSG:4326"
     )
 
-    # 10 km radius
-    folium.GeoJson(
-        buffer_geom.__geo_interface__,
-        name="10 km radius",
-        style_function=lambda x: {
-            "fillColor": "#3186cc",
-            "color": "#3186cc",
-            "weight": 1,
-            "fillOpacity": 0.1,
-        },
-    ).add_to(m)
+    # Spatial test
+    inside = areas[areas.contains(point.iloc[0].geometry)]
 
-    # Conservation areas
-    for _, row in nearby.iterrows():
-        tooltip_text = row["name"]
-        if isinstance(row.get("documentation-url"), str):
-            tooltip_text += " (documentation available)"
+    # --------------------------------------------------
+    # Results
+    # --------------------------------------------------
 
-        folium.GeoJson(
-            row.geometry.__geo_interface__,
-            tooltip=tooltip_text,
-            style_function=lambda x: {
-                "fillColor": "green",
-                "color": "darkgreen",
-                "weight": 2,
-                "fillOpacity": 0.4,
-            },
-        ).add_to(m)
+    if inside.empty:
+        st.success("✅ This postcode is NOT inside a conservation area.")
+    else:
+        st.warning("⚠️ This postcode IS inside a conservation area.")
+
+        for _, row in inside.iterrows():
+            st.markdown(f"### {row['area_name']} ({row['source']})")
+            if row["doc_url"]:
+                st.markdown(f"[📄 Documentation]({row['doc_url']})")
+
+    # --------------------------------------------------
+    # Map
+    # --------------------------------------------------
+
+    m = folium.Map(location=[lat, lon], zoom_start=12)
 
     # Postcode marker
     folium.Marker(
-        location=[point.y, point.x],
-        popup=postcode,
-        icon=folium.Icon(color="red", icon="home"),
+        [lat, lon],
+        tooltip="Postcode location",
+        icon=folium.Icon(color="red", icon="home")
     ).add_to(m)
 
-    folium.LayerControl().add_to(m)
+    # 10km radius
+    folium.Circle(
+        radius=10000,
+        location=[lat, lon],
+        color="blue",
+        fill=False
+    ).add_to(m)
 
+    # Nearby conservation areas
+    nearby = areas[areas.geometry.distance(point.iloc[0].geometry) < 0.1]
+
+    folium.GeoJson(
+        nearby,
+        name="Conservation Areas",
+        style_function=lambda x: {
+            "fillColor": "green",
+            "color": "green",
+            "weight": 1,
+            "fillOpacity": 0.3,
+        },
+        tooltip=folium.GeoJsonTooltip(fields=["area_name", "source"])
+    ).add_to(m)
+
+    st.subheader("🗺️ Map")
     st_folium(m, width=900, height=600)
-
-# -------------------------
-# Footer
-# -------------------------
-st.markdown(
-    "---\n"
-    "_Uses postcode centroid data (postcodes.io) for screening purposes only._"
-)
